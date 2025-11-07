@@ -5,6 +5,38 @@ import streamlit as st
 from pandas.tseries.offsets import MonthEnd
 
 # ============================
+# AUTHENTIFICATION
+# ============================
+if "login" not in st.session_state:
+    st.session_state["login"] = False
+if "page" not in st.session_state:
+    st.session_state["page"] = "Accueil"
+
+def login(username, password):
+    users = {
+        "aurore": {"password": "12345", "name": "Aurore Demoulin"},
+        "laure.froidefond": {"password": "Laure2019$", "name": "Laure Froidefond"},
+        "Bruno": {"password": "Toto1963$", "name": "Toto El Gringo"}
+    }
+    if username in users and password == users[username]["password"]:
+        st.session_state["login"] = True
+        st.session_state["username"] = username
+        st.session_state["name"] = users[username]["name"]
+        st.session_state["page"] = "Accueil"
+        st.success(f"Bienvenue {st.session_state['name']} 👋")
+        st.experimental_rerun()
+    else:
+        st.error("❌ Identifiants incorrects")
+
+if not st.session_state["login"]:
+    st.title("🔑 Connexion espace expert-comptable")
+    username_input = st.text_input("Identifiant")
+    password_input = st.text_input("Mot de passe", type="password")
+    if st.button("Connexion"):
+        login(username_input, password_input)
+    st.stop()
+
+# ============================
 # Interface utilisateur
 # ============================
 st.title("📊 Générateur d'écritures analytiques - BLDD")
