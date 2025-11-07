@@ -1,12 +1,11 @@
 import pandas as pd
-import numpy as np
 from io import BytesIO
 import streamlit as st
 
-st.title("📘 Générateur d'écritures de reprise globale - 411 / 781 par ISBN")
+st.title("📘 Générateur d'écritures de reprise - 411 / 781 par ISBN")
 
 # === Import du fichier ===
-fichier_entree = st.file_uploader("📂 Importer le fichier Excel BLDD (avec montants par ISBN)", type=["xlsx"])
+fichier_entree = st.file_uploader("📂 Importer le fichier Excel BLDD (avec colonne 'Vente')", type=["xlsx"])
 
 # === Paramètres ===
 date_ecriture = st.date_input("📅 Date d'écriture", value=pd.to_datetime("2025-03-31"))
@@ -18,18 +17,12 @@ famille_analytique = st.text_input("🏷️ Famille analytique", value="EDITION"
 compte_reprise = st.text_input("Compte produit (781...)", value="781000000")
 compte_client = st.text_input("Compte client (411...)", value="411100011")
 
-# Montant total à ventiler
-montant_total = st.number_input("💶 Montant total de la reprise", value=0.0, format="%.2f")
-
-# Base de ventilation
-base_ventilation = st.selectbox("📊 Base de ventilation", ["Vente", "Net", "Facture"], index=0)
-
-# === Traitement ===
 if fichier_entree is not None:
     df = pd.read_excel(fichier_entree, header=9, dtype={"ISBN": str})
     df.columns = df.columns.str.strip()
     df = df.dropna(subset=["ISBN"]).copy()
 
+    # Nettoyage ISBN
     df["ISBN"] = (
         df["ISBN"].astype(str)
         .str.strip()
@@ -38,23 +31,19 @@ if fichier_entree is not None:
         .str.replace(" ", "", regex=False)
     )
 
-    # Conversion montants
-    for c in ["Vente", "Net", "Facture"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).round(2)
-        else:
-            df[c] = 0.0
-
-    base = df[base_ventilation]
-    if base.sum() == 0:
-        st.error(f"⚠️ Impossible de répartir : la base '{base_ventilation}' est nulle.")
+    # Conversion colonne Vente
+    if "Vente" not in df.columns:
+        st.error("⚠️ La colonne 'Vente' est introuvable dans le fichier.")
     else:
-        # Ventilation du montant total
-        df["Montant_reprise"] = np.round((base / base.sum()) * montant_total, 2)
-        diff = round(montant_total - df["Montant_reprise"].sum(), 2)
-        if diff != 0 and len(df) > 0:
-            idx_max = df["Montant_reprise"].idxmax()
-            df.loc[idx_max, "Montant_reprise"] += diff
+        df["Vente"] = pd.to_numeric(df["Vente"], errors="coerce").fillna(0)
+
+        # Calcul TTC et provision
+        df["Vente_TTC"] = df["Vente"] * 1.055
+        df["Montant_reprise"] = df["Vente_TTC"] * 0.10
+
+        montant_total = round(df["Montant_reprise"].sum(), 2)
+
+        st.info(f"💶 Montant total de reprise calculé : {montant_total:,.2f} €")
 
         # === Génération des écritures ===
         ecritures = []
@@ -67,14 +56,14 @@ if fichier_entree is not None:
             "Libelle": f"{libelle_base} - Reprise globale client",
             "Famille analytique": famille_analytique,
             "ISBN": "",
-            "Débit": round(montant_total, 2),
+            "Débit": montant_total,
             "Crédit": 0.0
         })
 
         # Lignes 781 par ISBN au CREDIT
         for _, r in df.iterrows():
             isbn = r["ISBN"]
-            montant = r["Montant_reprise"]
+            montant = round(r["Montant_reprise"], 2)
             ecritures.append({
                 "Date": date_ecriture.strftime("%d/%m/%Y"),
                 "Journal": journal,
@@ -83,12 +72,12 @@ if fichier_entree is not None:
                 "Famille analytique": famille_analytique,
                 "ISBN": isbn,
                 "Débit": 0.0,
-                "Crédit": round(montant, 2)
+                "Crédit": montant
             })
 
         df_ecr = pd.DataFrame(ecritures)
 
-        # Vérification équilibre
+        # Vérif équilibre
         total_debit = df_ecr["Débit"].sum()
         total_credit = df_ecr["Crédit"].sum()
         if abs(total_debit - total_credit) > 0.01:
