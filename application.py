@@ -1,34 +1,33 @@
-import pandas as pd
-import numpy as np
-from io import BytesIO
 import streamlit as st
-from dateutil.relativedelta import relativedelta
-import calendar
+import pandas as pd
+from io import BytesIO
+from datetime import datetime, timedelta
 
-# ============================
+# ============================================================
 # 🔐 AUTHENTIFICATION
-# ============================
+# ============================================================
 if "login" not in st.session_state:
     st.session_state["login"] = False
-if "username" not in st.session_state:
-    st.session_state["username"] = ""
-if "name" not in st.session_state:
-    st.session_state["name"] = ""
+if "page" not in st.session_state:
+    st.session_state["page"] = "Accueil"
 
 def login(username, password):
     users = {
         "aurore": {"password": "12345", "name": "Aurore Demoulin"},
-        "laure.froidefond": {"password": "Laure Froidefond"},
+        "laure.froidefond": {"password": "Laure2019$", "name": "Laure Froidefond"},
         "Bruno": {"password": "Toto1963$", "name": "Toto El Gringo"}
     }
     if username in users and password == users[username]["password"]:
         st.session_state["login"] = True
         st.session_state["username"] = username
         st.session_state["name"] = users[username]["name"]
+        st.session_state["page"] = "Accueil"
         st.success(f"Bienvenue {st.session_state['name']} 👋")
+        st.rerun()
     else:
         st.error("❌ Identifiants incorrects")
 
+# Page de connexion
 if not st.session_state["login"]:
     st.title("🔑 Connexion espace expert-comptable")
     username_input = st.text_input("Identifiant")
@@ -37,190 +36,117 @@ if not st.session_state["login"]:
         login(username_input, password_input)
     st.stop()
 
-# ============================
-# 🔓 Déconnexion
-# ============================
-if st.sidebar.button("Déconnexion"):
-    st.session_state["login"] = False
-    st.session_state["username"] = ""
-    st.session_state["name"] = ""
-    st.success("Vous êtes déconnecté(e).")
+# Déconnexion
+col1, col2 = st.columns([4, 1])
+with col2:
+    if st.button("🚪 Déconnexion"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.session_state["login"] = False
+        st.success("Déconnecté avec succès.")
+        st.stop()
+
+# ============================================================
+# 📁 IMPORT DU FICHIER
+# ============================================================
+st.title("📊 Génération des écritures analytiques (provisions retours)")
+
+uploaded_file = st.file_uploader("Importer le fichier Excel", type=["xlsx"])
+if uploaded_file is None:
     st.stop()
 
-# ============================
-# 📊 Interface principale
-# ============================
-st.title("📊 Générateur d'écritures analytiques - BLDD")
+df = pd.read_excel(uploaded_file)
+st.success("✅ Fichier importé avec succès")
 
-fichier_entree = st.file_uploader("📂 Importer le fichier Excel BLDD", type=["xlsx"])
-date_ecriture = st.date_input("📅 Date d'écriture")
-journal = st.text_input("📒 Journal", value="VT")
-libelle_base = st.text_input("📝 Libellé", value="VENTES BLDD")
-famille_analytique = st.text_input("🏷️ Famille analytique", value="EDITION")
+# Vérification colonnes minimales
+colonnes_attendues = {"ISBN", "Famille analytique", "Vente"}
+if not colonnes_attendues.issubset(df.columns):
+    st.error("❌ Le fichier doit contenir les colonnes : ISBN, Famille analytique, Vente")
+    st.stop()
 
-# Comptes utilisés
-compte_ca = "701100000"
-compte_retour = "709000000"
-compte_remise = "709100000"
-compte_com_dist = "622800000"
-compte_com_diff = "622800010"
-compte_tva_collectee = "445710060"
-compte_tva_com = "445660000"
-compte_provision = "681000000"
-compte_reprise = "781000000"
-compte_client = "411100011"
+# ============================================================
+# 🧮 TRAITEMENT
+# ============================================================
+date_saisie = st.date_input("📅 Date des écritures (fin de période)")
+if not date_saisie:
+    st.stop()
 
-# Paramètres commissions
-com_distribution_total = st.number_input("Montant total commissions distribution", value=1000.00, format="%.2f")
-com_diffusion_total = st.number_input("Montant total commissions diffusion", value=500.00, format="%.2f")
+taux_tva = 5.5
+taux_provision = 0.10
 
-# ============================
-# 🧮 Traitement
-# ============================
-if fichier_entree is not None:
-    df = pd.read_excel(fichier_entree, header=9, dtype={"ISBN": str})
-    df.columns = df.columns.str.strip()
-    df = df.dropna(subset=["ISBN"]).copy()
+# Calcul du TTC et provision
+df["Vente_TTC"] = df["Vente"] * (1 + taux_tva / 100)
+df["Provision"] = df["Vente_TTC"] * taux_provision
 
-    df["ISBN"] = (
-        df["ISBN"].astype(str)
-        .str.strip()
-        .str.replace(r"\.0$", "", regex=True)
-        .str.replace("-", "", regex=False)
-        .str.replace(" ", "", regex=False)
-    )
+# Date de reprise = 6 mois plus tard
+date_reprise = date_saisie + timedelta(days=183)
 
-    for c in ["Vente", "Retour", "Net", "Facture"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).round(2)
+# Liste d'écritures
+ecritures = []
 
-    # Répartition des commissions avec arrondi au centime
-    def repartir_commissions(montants, total):
-        if montants.sum() == 0:
-            return pd.Series([0] * len(montants))
-        raw = montants.copy()
-        scaled = raw * (total / raw.sum())
-        cents_floor = np.floor(scaled * 100).astype(int)
-        remainders = (scaled * 100) - cents_floor
-        diff = int(round(total * 100)) - cents_floor.sum()
-        idx_sorted = np.argsort(-remainders.values)
-        adjust = np.zeros(len(raw), dtype=int)
-        if diff > 0:
-            adjust[idx_sorted[:diff]] = 1
-        elif diff < 0:
-            adjust[idx_sorted[len(raw) + diff:]] = -1
-        return (cents_floor + adjust) / 100.0
+def add_ligne(date, journal, compte, libelle, famille, isbn, debit, credit):
+    ecritures.append({
+        "Date": date.strftime("%d/%m/%Y"),
+        "Journal": journal,
+        "Compte": compte,
+        "Libellé": libelle,
+        "Famille analytique": famille,
+        "ISBN": isbn,
+        "Débit": round(debit, 2),
+        "Crédit": round(credit, 2)
+    })
 
-    df["Commission_distribution"] = repartir_commissions(df["Vente"], com_distribution_total)
-    df["Commission_diffusion"] = repartir_commissions(df["Net"], com_diffusion_total)
+for _, r in df.iterrows():
+    isbn = r["ISBN"]
+    famille = r["Famille analytique"]
+    vente = r["Vente"]
+    vente_ttc = r["Vente_TTC"]
+    provision = r["Provision"]
 
-    ecritures = []
+    # Comptes
+    c_ventes = "707000000"
+    c_tva = "445710000"
+    c_provision = "681000000"
+    c_reprise = "781000000"
+    c_retour = "709000000"
+    c_client = "411000000"
 
-    def last_day_of_month(date):
-        return date.replace(day=calendar.monthrange(date.year, date.month)[1])
+    # --- ÉCRITURE 1 : à la date saisie ---
+    libelle = f"VENTES {famille.upper()} {date_saisie.strftime('%B %Y').upper()}"
 
-    def add_ligne(compte, libelle, debit, credit, date_ligne=None, isbn_val=""):
-        ecritures.append({
-            "Date": (date_ligne.strftime("%d/%m/%Y") if date_ligne else date_ecriture.strftime("%d/%m/%Y")),
-            "Journal": journal,
-            "Compte": compte,
-            "Libelle": libelle,
-            "Famille analytique": famille_analytique,
-            "ISBN": isbn_val,
-            "Débit": round(debit, 2),
-            "Crédit": round(credit, 2)
-        })
+    # Ventes HT
+    add_ligne(date_saisie, "VT", c_ventes, f"{libelle} - CA HT", famille, isbn, 0, vente)
+    # TVA
+    add_ligne(date_saisie, "VT", c_tva, f"{libelle} - TVA collectée", famille, isbn, 0, vente * taux_tva / 100)
+    # Dotation provision
+    add_ligne(date_saisie, "VT", c_provision, f"{libelle} - Dotation provision retours", famille, isbn, provision, 0)
+    # 411 : total TTC + provision
+    total_411 = vente_ttc + provision
+    add_ligne(date_saisie, "VT", c_client, f"{libelle} - Client", famille, isbn, total_411, 0)
 
-    total_client_debit = 0
-    total_client_credit = 0
+    # --- ÉCRITURE 2 : reprise 6 mois plus tard ---
+    libelle_r = f"REPRISE {famille.upper()} {date_reprise.strftime('%B %Y').upper()}"
+    # Reprise provision
+    add_ligne(date_reprise, "VT", c_reprise, f"{libelle_r} - Reprise provision", famille, isbn, provision, 0)
+    # Retours (709 au débit)
+    add_ligne(date_reprise, "VT", c_retour, f"{libelle_r} - Retours sur ventes", famille, isbn, provision, 0)
+    # 411 contrepartie
+    add_ligne(date_reprise, "VT", c_client, f"{libelle_r} - Client", famille, isbn, 0, provision * 2)
 
-    # Écritures analytiques par ISBN
-    for _, r in df.iterrows():
-        isbn = r["ISBN"]
+# ============================================================
+# 📤 EXPORT & AFFICHAGE
+# ============================================================
+df_final = pd.DataFrame(ecritures)
+st.subheader("Aperçu des écritures générées")
+st.dataframe(df_final)
 
-        # CA brut
-        add_ligne(compte_ca, f"{libelle_base} - CA brut", 0.0, r["Vente"], isbn_val=isbn)
-        total_client_debit += r["Vente"]
-
-        # Retours — sens selon le signe
-        if r["Retour"] > 0:
-            add_ligne(compte_retour, f"{libelle_base} - Retours", r["Retour"], 0.0, isbn_val=isbn)
-            total_client_credit += r["Retour"]
-        elif r["Retour"] < 0:
-            add_ligne(compte_retour, f"{libelle_base} - Retours (ajustement)", 0.0, abs(r["Retour"]), isbn_val=isbn)
-            total_client_debit += abs(r["Retour"])
-
-        # Remises libraires
-        remise = r["Net"] - r["Facture"]
-        if remise != 0:
-            if remise > 0:
-                add_ligne(compte_remise, f"{libelle_base} - Remises libraires", remise, 0.0, isbn_val=isbn)
-                total_client_credit += remise
-            else:
-                add_ligne(compte_remise, f"{libelle_base} - Remises libraires", 0.0, abs(remise), isbn_val=isbn)
-                total_client_debit += abs(remise)
-
-        # Commissions distribution & diffusion
-        add_ligne(compte_com_dist, f"{libelle_base} - Com. distribution", r["Commission_distribution"], 0.0, isbn_val=isbn)
-        add_ligne(compte_com_diff, f"{libelle_base} - Com. diffusion", r["Commission_diffusion"], 0.0, isbn_val=isbn)
-
-        total_client_credit += r["Commission_distribution"] + r["Commission_diffusion"]
-
-        # Provision retours
-        provision_isbn = round(r["Vente"] * 1.055 * 0.10, 2)
-        add_ligne(compte_provision, f"{libelle_base} - Provision retours", provision_isbn, 0.0, isbn_val=isbn)
-        total_client_credit += provision_isbn
-
-        # Reprise 6 mois plus tard
-        date_reprise = last_day_of_month(date_ecriture + relativedelta(months=6))
-        add_ligne(compte_reprise, f"{libelle_base} - Reprise provision", 0.0, provision_isbn, date_ligne=date_reprise, isbn_val=isbn)
-
-    # Ligne 411 à date (équilibrage)
-    total_debit = sum([l["Débit"] for l in ecritures if l["Date"] == date_ecriture.strftime("%d/%m/%Y")])
-    total_credit = sum([l["Crédit"] for l in ecritures if l["Date"] == date_ecriture.strftime("%d/%m/%Y")])
-    diff = round(total_credit - total_debit, 2)
-    if diff != 0:
-        add_ligne(compte_client, f"{libelle_base} - Client global", diff if diff > 0 else 0.0, -diff if diff < 0 else 0.0)
-
-    # Ligne 411 à 6 mois (reprise)
-    date_reprise = last_day_of_month(date_ecriture + relativedelta(months=6))
-    total_debit_reprise = sum([l["Débit"] for l in ecritures if l["Date"] == date_reprise.strftime("%d/%m/%Y")])
-    total_credit_reprise = sum([l["Crédit"] for l in ecritures if l["Date"] == date_reprise.strftime("%d/%m/%Y")])
-    diff_reprise = round(total_credit_reprise - total_debit_reprise, 2)
-    if diff_reprise != 0:
-        add_ligne(compte_client, f"{libelle_base} - Client reprise", diff_reprise if diff_reprise > 0 else 0.0, -diff_reprise if diff_reprise < 0 else 0.0, date_ligne=date_reprise)
-
-    df_final = pd.DataFrame(ecritures)
-
-    # TVA globale
-    ca_net_total = df["Facture"].sum()
-    com_total = df["Commission_distribution"].sum() + df["Commission_diffusion"].sum()
-    tva_collectee = round(ca_net_total * 0.055, 2)
-    tva_com = round(com_total * 0.055, 2)
-
-    lignes_tva = [
-        {"Date": date_ecriture.strftime("%d/%m/%Y"), "Journal": journal, "Compte": compte_tva_collectee,
-         "Libelle": f"{libelle_base} - TVA collectée", "Famille analytique": famille_analytique,
-         "ISBN": "", "Débit": 0.0, "Crédit": tva_collectee},
-        {"Date": date_ecriture.strftime("%d/%m/%Y"), "Journal": journal, "Compte": compte_tva_com,
-         "Libelle": f"{libelle_base} - TVA déductible commissions", "Famille analytique": famille_analytique,
-         "ISBN": "", "Débit": tva_com, "Crédit": 0.0},
-    ]
-    df_final = pd.concat([df_final, pd.DataFrame(lignes_tva)], ignore_index=True)
-
-    # ============================
-    # 📤 Export
-    # ============================
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df_final.to_excel(writer, index=False, sheet_name="Ecritures")
-    buffer.seek(0)
-
-    st.download_button(
-        label="📥 Télécharger les écritures (Excel)",
-        data=buffer,
-        file_name="Ecritures_BLDD.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-    st.subheader("👀 Aperçu des écritures générées")
-    st.dataframe(df_final)
+# Export Excel
+output = BytesIO()
+with pd.ExcelWriter(output, engine='openpyxl') as writer:
+    df_final.to_excel(writer, index=False, sheet_name="Écritures")
+st.download_button(
+    label="📥 Télécharger les écritures Excel",
+    data=output.getvalue(),
+    file_name=f"ecritures_provision_retours_{date_saisie.strftime('%Y%m%d')}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
