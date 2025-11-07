@@ -8,7 +8,7 @@ from io import BytesIO
 if "login" not in st.session_state:
     st.session_state["login"] = False
 if "page" not in st.session_state:
-    st.session_state["page"] = "Accueil"
+    st.session_state["page"] = "PROVISIONS EDITION"
 
 def login(username, password):
     users = {
@@ -21,7 +21,7 @@ def login(username, password):
         st.session_state["login"] = True
         st.session_state["username"] = username
         st.session_state["name"] = users[username]["name"]
-        st.session_state["page"] = "Accueil"
+        st.session_state["page"] = "PROVISIONS EDITION"
         st.success(f"Bienvenue {st.session_state['name']} 👋")
         st.experimental_rerun()
     else:
@@ -36,35 +36,14 @@ if not st.session_state["login"]:
     st.stop()
 
 # ============================================================
-# 📑 MENU PRINCIPAL
+# 📑 MENU MINIMAL
 # ============================================================
-pages = [
-    "Accueil",
-    "DATA EDITION",
-    "SOCLE EDITION",
-    "REPARTITION CHARGES FIXES",
-    "VISION EDITION",
-    "ISBN VIEW",
-    "ROYALTIES EDITION",
-    "RETURNS EDITION",
-    "PROVISIONS EDITION",  # ← Nouvelle page
-    "CASH EDITION",
-    "SYNTHESE GLOBALE"
-]
-
-page = st.sidebar.selectbox("📘 Navigation", pages)
-
-# ============================================================
-# 🏠 PAGE ACCUEIL
-# ============================================================
-if page == "Accueil":
-    st.title("Bienvenue dans l'application comptable 📊")
-    st.write("Choisissez une section dans le menu de gauche.")
+page = st.session_state["page"]
 
 # ============================================================
 # 📘 PROVISIONS EDITION
 # ============================================================
-elif page == "PROVISIONS EDITION":
+if page == "PROVISIONS EDITION":
     st.header("📘 PROVISIONS EDITION - Génération automatique des écritures de provisions et reprises différées")
 
     # Import du fichier Excel
