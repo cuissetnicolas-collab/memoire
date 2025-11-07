@@ -93,22 +93,22 @@ if fichier_entree is not None:
     for c in ["Vente", "Retour", "Net", "Facture"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).round(2)
 
-    # Répartition des commissions avec arrondi au centime
+    # Répartition des commissions
     def repartir_commissions(montants, total):
         if montants.sum() == 0:
-            return pd.Series([0] * len(montants))
+            return pd.Series([0]*len(montants))
         raw = montants.copy()
         scaled = raw * (total / raw.sum())
-        cents_floor = np.floor(scaled * 100).astype(int)
-        remainders = (scaled * 100) - cents_floor
-        diff = int(round(total * 100)) - cents_floor.sum()
+        cents_floor = np.floor(scaled*100).astype(int)
+        remainders = (scaled*100) - cents_floor
+        diff = int(round(total*100)) - cents_floor.sum()
         idx_sorted = np.argsort(-remainders.values)
         adjust = np.zeros(len(raw), dtype=int)
         if diff > 0:
             adjust[idx_sorted[:diff]] = 1
         elif diff < 0:
-            adjust[idx_sorted[len(raw) + diff:]] = -1
-        return (cents_floor + adjust) / 100.0
+            adjust[idx_sorted[len(raw)+diff:]] = -1
+        return (cents_floor + adjust)/100.0
 
     df["Commission_distribution"] = repartir_commissions(df["Vente"], com_distribution_total)
     df["Commission_diffusion"] = repartir_commissions(df["Net"], com_diffusion_total)
@@ -126,20 +126,18 @@ if fichier_entree is not None:
             "Libelle": libelle,
             "Famille analytique": famille_analytique,
             "ISBN": isbn_val,
-            "Débit": round(debit, 2),
-            "Crédit": round(credit, 2)
+            "Débit": round(debit,2),
+            "Crédit": round(credit,2)
         })
 
-    # ============================
     # Écritures analytiques par ISBN
-    # ============================
     for _, r in df.iterrows():
         isbn = r["ISBN"]
 
         # CA brut
         add_ligne(compte_ca, f"{libelle_base} - CA brut", 0.0, r["Vente"], isbn_val=isbn)
 
-        # Retours → toujours négatif dans fichier → transformé en positif au débit
+        # Retours (toujours négatif dans fichier → positif au débit)
         if r["Retour"] != 0:
             add_ligne(compte_retour, f"{libelle_base} - Retours", abs(r["Retour"]), 0.0, isbn_val=isbn)
 
@@ -147,10 +145,10 @@ if fichier_entree is not None:
         remise = r["Net"] - r["Facture"]
         if remise != 0:
             if remise > 0:
-                # positive → débit
+                # positif → débit
                 add_ligne(compte_remise, f"{libelle_base} - Remises libraires", remise, 0.0, isbn_val=isbn)
             else:
-                # négative → crédit
+                # négatif → crédit
                 add_ligne(compte_remise, f"{libelle_base} - Remises libraires", 0.0, abs(remise), isbn_val=isbn)
 
         # Commissions distribution & diffusion
@@ -166,7 +164,7 @@ if fichier_entree is not None:
         add_ligne(compte_reprise, f"{libelle_base} - Reprise provision", 0.0, provision_isbn, date_ligne=date_reprise, isbn_val=isbn)
 
     # ============================
-    # 411 globale pour équilibrer par date
+    # Ligne 411 globale par date pour équilibrer
     # ============================
     df_temp = pd.DataFrame(ecritures)
     for date_val in df_temp["Date"].unique():
@@ -179,21 +177,19 @@ if fichier_entree is not None:
             else:
                 add_ligne(compte_client, f"{libelle_base} - Contrepartie client", -diff, 0.0, date_ligne=pd.to_datetime(date_val))
 
-    # ============================
     # TVA globale
-    # ============================
     ca_net_total = df["Facture"].sum()
     com_total = df["Commission_distribution"].sum() + df["Commission_diffusion"].sum()
-    tva_collectee = round(ca_net_total * 0.055, 2)
-    tva_com = round(com_total * 0.055, 2)
+    tva_collectee = round(ca_net_total * 0.055,2)
+    tva_com = round(com_total * 0.055,2)
 
     lignes_tva = [
         {"Date": date_ecriture.strftime("%d/%m/%Y"), "Journal": journal, "Compte": compte_tva_collectee,
          "Libelle": f"{libelle_base} - TVA collectée", "Famille analytique": famille_analytique,
-         "ISBN": "", "Débit": 0.0, "Crédit": tva_collectee},
+         "ISBN": "", "Débit":0.0, "Crédit": tva_collectee},
         {"Date": date_ecriture.strftime("%d/%m/%Y"), "Journal": journal, "Compte": compte_tva_com,
          "Libelle": f"{libelle_base} - TVA déductible commissions", "Famille analytique": famille_analytique,
-         "ISBN": "", "Débit": tva_com, "Crédit": 0.0},
+         "ISBN": "", "Débit": tva_com, "Crédit":0.0},
     ]
     df_final = pd.concat([pd.DataFrame(ecritures), pd.DataFrame(lignes_tva)], ignore_index=True)
 
