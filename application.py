@@ -132,13 +132,15 @@ if "df_import" in st.session_state and "date_vente" in st.session_state:
     df_ecritures = pd.DataFrame(ecritures)
     st.dataframe(df_ecritures)
 
-    # Bouton téléchargement
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df_ecritures.to_excel(writer, index=False, sheet_name="Provisions")
-    buffer.seek(0)
-    st.download_button(
-        "📥 Télécharger les écritures comptables",
-        buffer,
-        file_name="Ecritures_Provisions.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+# Bouton téléchargement
+buffer = BytesIO()
+with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+    df_ecritures.to_excel(writer, index=False, sheet_name="Provisions")
+buffer.seek(0)
+
+st.download_button(
+    label="📥 Télécharger les écritures comptables",
+    data=buffer,
+    file_name="Ecritures_Provisions.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
