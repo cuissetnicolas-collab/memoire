@@ -1,103 +1,176 @@
+import streamlit as st
 import pandas as pd
 from io import BytesIO
-import streamlit as st
 
-st.title("📘 Générateur d'écritures de reprise - 411 / 781 par ISBN")
+# ============================================================
+# 🔐 AUTHENTIFICATION
+# ============================================================
+if "login" not in st.session_state:
+    st.session_state["login"] = False
+if "page" not in st.session_state:
+    st.session_state["page"] = "Accueil"
 
-# === Import du fichier ===
-fichier_entree = st.file_uploader("📂 Importer le fichier Excel BLDD (avec colonne 'Vente')", type=["xlsx"])
-
-# === Paramètres ===
-date_ecriture = st.date_input("📅 Date d'écriture", value=pd.to_datetime("2025-03-31"))
-journal = st.text_input("📒 Journal", value="OD")
-libelle_base = st.text_input("📝 Libellé", value="Reprise provision Oct.2024 - Mars.2025")
-famille_analytique = st.text_input("🏷️ Famille analytique", value="EDITION")
-
-# Comptes
-compte_reprise = st.text_input("Compte produit (781...)", value="781000000")
-compte_client = st.text_input("Compte client (411...)", value="411100011")
-
-if fichier_entree is not None:
-    df = pd.read_excel(fichier_entree, header=9, dtype={"ISBN": str})
-    df.columns = df.columns.str.strip()
-    df = df.dropna(subset=["ISBN"]).copy()
-
-    # Nettoyage ISBN
-    df["ISBN"] = (
-        df["ISBN"].astype(str)
-        .str.strip()
-        .str.replace(r"\.0$", "", regex=True)
-        .str.replace("-", "", regex=False)
-        .str.replace(" ", "", regex=False)
-    )
-
-    # Conversion colonne Vente
-    if "Vente" not in df.columns:
-        st.error("⚠️ La colonne 'Vente' est introuvable dans le fichier.")
+def login(username, password):
+    users = {
+        "aurore": {"password": "12345", "name": "Aurore Demoulin"},
+        "laure.froidefond": {"password": "Laure2019$", "name": "Laure Froidefond"},
+        "Bruno": {"password": "Toto1963$", "name": "Toto El Gringo"},
+        "Manana": {"password": "193827", "name": "Manana"}
+    }
+    if username in users and password == users[username]["password"]:
+        st.session_state["login"] = True
+        st.session_state["username"] = username
+        st.session_state["name"] = users[username]["name"]
+        st.session_state["page"] = "Accueil"
+        st.success(f"Bienvenue {st.session_state['name']} 👋")
+        st.experimental_rerun()
     else:
-        df["Vente"] = pd.to_numeric(df["Vente"], errors="coerce").fillna(0)
+        st.error("❌ Identifiants incorrects")
 
-        # Calcul TTC et provision
-        df["Vente_TTC"] = df["Vente"] * 1.055
-        df["Montant_reprise"] = df["Vente_TTC"] * 0.10
+if not st.session_state["login"]:
+    st.title("🔑 Connexion espace expert-comptable")
+    username_input = st.text_input("Identifiant")
+    password_input = st.text_input("Mot de passe", type="password")
+    if st.button("Connexion"):
+        login(username_input, password_input)
+    st.stop()
 
-        montant_total = round(df["Montant_reprise"].sum(), 2)
+# ============================================================
+# 📑 MENU PRINCIPAL
+# ============================================================
+pages = [
+    "Accueil",
+    "DATA EDITION",
+    "SOCLE EDITION",
+    "REPARTITION CHARGES FIXES",
+    "VISION EDITION",
+    "ISBN VIEW",
+    "ROYALTIES EDITION",
+    "RETURNS EDITION",
+    "PROVISIONS EDITION",  # ← Nouvelle page
+    "CASH EDITION",
+    "SYNTHESE GLOBALE"
+]
 
-        st.info(f"💶 Montant total de reprise calculé : {montant_total:,.2f} €")
+page = st.sidebar.selectbox("📘 Navigation", pages)
 
-        # === Génération des écritures ===
-        ecritures = []
+# ============================================================
+# 🏠 PAGE ACCUEIL
+# ============================================================
+if page == "Accueil":
+    st.title("Bienvenue dans l'application comptable 📊")
+    st.write("Choisissez une section dans le menu de gauche.")
 
-        # Ligne globale 411 au DEBIT
-        ecritures.append({
-            "Date": date_ecriture.strftime("%d/%m/%Y"),
-            "Journal": journal,
-            "Compte": compte_client,
-            "Libelle": f"{libelle_base} - Reprise globale client",
-            "Famille analytique": famille_analytique,
-            "ISBN": "",
-            "Débit": montant_total,
-            "Crédit": 0.0
-        })
+# ============================================================
+# 📘 PROVISIONS EDITION
+# ============================================================
+elif page == "PROVISIONS EDITION":
+    st.header("📘 PROVISIONS EDITION - Génération automatique des écritures de provisions et reprises différées")
 
-        # Lignes 781 par ISBN au CREDIT
-        for _, r in df.iterrows():
-            isbn = r["ISBN"]
-            montant = round(r["Montant_reprise"], 2)
-            ecritures.append({
-                "Date": date_ecriture.strftime("%d/%m/%Y"),
-                "Journal": journal,
-                "Compte": compte_reprise,
-                "Libelle": f"{libelle_base} - {isbn}",
-                "Famille analytique": famille_analytique,
-                "ISBN": isbn,
-                "Débit": 0.0,
-                "Crédit": montant
-            })
+    # Import du fichier Excel
+    fichier_provisions = st.file_uploader("📂 Importez votre fichier de ventes (Excel)", type=["xlsx"])
+    if fichier_provisions:
+        try:
+            df = pd.read_excel(fichier_provisions)
+            st.success(f"✅ Fichier chargé ({len(df)} lignes)")
 
-        df_ecr = pd.DataFrame(ecritures)
+            # Vérification des colonnes nécessaires
+            colonnes_attendues = ["ISBN", "Vente", "Date"]
+            if not all(col in df.columns for col in colonnes_attendues):
+                st.error(f"⚠️ Le fichier doit contenir les colonnes suivantes : {', '.join(colonnes_attendues)}")
+                st.stop()
 
-        # Vérif équilibre
-        total_debit = df_ecr["Débit"].sum()
-        total_credit = df_ecr["Crédit"].sum()
-        if abs(total_debit - total_credit) > 0.01:
-            st.error(f"⚠️ Écritures déséquilibrées : Débit={total_debit}, Crédit={total_credit}")
-        else:
-            st.success(f"✅ Écritures équilibrées ! Total = {total_debit:,.2f} €")
+            # =====================
+            # PARAMÉTRAGE UTILISATEUR
+            # =====================
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                mode_calcul = st.radio("Mode de calcul", ["TTC", "HT"])
+            with col2:
+                tva = st.number_input("Taux de TVA (%)", value=5.5, step=0.1) / 100
+            with col3:
+                taux_provision = st.number_input("Taux de provision (%)", value=10.0, step=0.5) / 100
 
-        # Export Excel
-        buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df_ecr.to_excel(writer, index=False, sheet_name="Reprise_411_781")
-        buffer.seek(0)
+            delai_reprise = st.slider("⏱️ Délai de reprise (mois)", 3, 12, 6, step=3)
 
-        st.download_button(
-            label="📥 Télécharger les écritures (Excel)",
-            data=buffer,
-            file_name="Ecritures_Reprise_411_781.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            st.subheader("🔢 Comptes comptables")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                compte_provision = st.text_input("Compte de provision (Crédit)", value="151000")
+            with col2:
+                compte_dotation = st.text_input("Compte de dotation (Débit)", value="681500")
+            with col3:
+                compte_reprise = st.text_input("Compte de reprise (Crédit)", value="781500")
 
-        # Aperçu
-        st.subheader("👀 Aperçu des écritures générées")
-        st.dataframe(df_ecr)
+            # =====================
+            # CALCUL DES MONTANTS
+            # =====================
+            df["Vente_TTC"] = pd.to_numeric(df["Vente"], errors="coerce").fillna(0)
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+            if mode_calcul == "HT":
+                df["Vente_HT"] = df["Vente_TTC"] / (1 + tva)
+                base = df["Vente_HT"]
+            else:
+                base = df["Vente_TTC"]
+
+            df["Provision"] = base * taux_provision
+            df["Provision"] = df["Provision"].round(2)
+
+            st.write("Aperçu du calcul :")
+            st.dataframe(df.head())
+
+            # =====================
+            # GÉNÉRATION DES ÉCRITURES
+            # =====================
+            ecritures = []
+            for _, row in df.iterrows():
+                if pd.isna(row["Date"]):
+                    continue
+                date_base = row["Date"]
+                montant = row["Provision"]
+                isbn = str(row["ISBN"])
+
+                # Écriture de constitution
+                ecritures.append({
+                    "Date": date_base,
+                    "Compte_D": compte_dotation,
+                    "Compte_C": compte_provision,
+                    "Montant": montant,
+                    "Libellé": f"Provision {isbn}"
+                })
+
+                # Écriture de reprise différée
+                date_reprise = date_base + pd.DateOffset(months=delai_reprise)
+                ecritures.append({
+                    "Date": date_reprise,
+                    "Compte_D": compte_provision,
+                    "Compte_C": compte_reprise,
+                    "Montant": montant,
+                    "Libellé": f"Reprise provision {isbn}"
+                })
+
+            df_ecritures = pd.DataFrame(ecritures)
+            df_ecritures = df_ecritures.sort_values("Date").reset_index(drop=True)
+
+            # =====================
+            # AFFICHAGE ET EXPORT
+            # =====================
+            st.success(f"✅ {len(df_ecritures)} écritures générées avec succès !")
+            st.dataframe(df_ecritures)
+
+            # Export Excel
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                df_ecritures.to_excel(writer, index=False, sheet_name="Provisions")
+            buffer.seek(0)
+
+            st.download_button(
+                "📥 Télécharger les écritures de provisions et reprises différées",
+                buffer,
+                file_name="Ecritures_Provisions.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        except Exception as e:
+            st.error(f"❌ Erreur lors du traitement : {e}")
