@@ -2,10 +2,9 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import streamlit as st
-from datetime import timedelta
 
 # ============================
-# AUTHENTIFICATION
+# 🔐 AUTHENTIFICATION
 # ============================
 if "login" not in st.session_state:
     st.session_state["login"] = False
@@ -23,7 +22,7 @@ def login(username, password):
         st.session_state["username"] = username
         st.session_state["name"] = users[username]["name"]
         st.session_state["page"] = "Accueil"
-        st.success(f"Bienvenue {st.session_state['name']} 👋")
+        st.experimental_rerun()
     else:
         st.error("❌ Identifiants incorrects")
 
@@ -35,17 +34,15 @@ if not st.session_state["login"]:
         login(username_input, password_input)
     st.stop()
 
-# Bouton Déconnexion
-if st.session_state["login"]:
-    if st.button("🔒 Déconnexion"):
-        st.session_state["login"] = False
-        st.success("✅ Déconnecté avec succès.")
-        st.stop()
-
 # ============================
-# INTERFACE UTILISATEUR
+# Interface utilisateur
 # ============================
 st.title("📊 Générateur d'écritures analytiques - BLDD")
+
+# Déconnexion
+if st.button("Déconnexion"):
+    st.session_state["login"] = False
+    st.experimental_rerun()
 
 # Import du fichier
 fichier_entree = st.file_uploader("📂 Importer le fichier Excel BLDD", type=["xlsx"])
@@ -77,7 +74,7 @@ taux_dist = st.number_input("Taux distribution (%)", value=12.5) / 100
 taux_diff = st.number_input("Taux diffusion (%)", value=9.0) / 100
 
 # ============================
-# TRAITEMENT
+# Traitement
 # ============================
 if fichier_entree is not None:
     df = pd.read_excel(fichier_entree, header=9, dtype={"ISBN": str})
@@ -109,7 +106,7 @@ if fichier_entree is not None:
         if diff > 0:
             adjust[idx_sorted[:diff]] = 1
         elif diff < 0:
-            adjust[idx_sorted[len(raw) + diff :]] = -1
+            adjust[idx_sorted[len(raw) + diff:]] = -1
         return (cents_floor + adjust) / 100.0
 
     df["Commission_distribution"] = repartir_commissions(df["Vente"], com_distribution_total)
@@ -120,41 +117,47 @@ if fichier_entree is not None:
     # ============================
     ecritures = []
 
+    def add_ligne(compte, libelle, debit, credit, date_ligne=None, isbn_val=""):
+        ecritures.append({
+            "Date": (date_ligne.strftime("%d/%m/%Y") if date_ligne else date_ecriture.strftime("%d/%m/%Y")),
+            "Journal": journal,
+            "Compte": compte,
+            "Libelle": libelle,
+            "Famille analytique": famille_analytique,
+            "ISBN": isbn_val,
+            "Débit": round(debit, 2),
+            "Crédit": round(credit, 2)
+        })
+
     for _, r in df.iterrows():
         isbn = r["ISBN"]
-        def add_ligne(compte, libelle, debit, credit):
-            ecritures.append({
-                "Date": date_ecriture.strftime("%d/%m/%Y"),
-                "Journal": journal,
-                "Compte": compte,
-                "Libelle": libelle,
-                "Famille analytique": famille_analytique,
-                "ISBN": isbn,
-                "Débit": round(debit, 2),
-                "Crédit": round(credit, 2)
-            })
 
         # CA brut
-        add_ligne(compte_ca, f"{libelle_base} - CA brut", 0.0, max(0, r["Vente"]))
+        add_ligne(compte_ca, f"{libelle_base} - CA brut", 0.0, max(0, r["Vente"]), isbn)
         # Retours
-        add_ligne(compte_retour, f"{libelle_base} - Retours", abs(r["Retour"]), 0.0)
+        add_ligne(compte_retour, f"{libelle_base} - Retours", abs(r["Retour"]), 0.0, isbn_val=isbn)
         # Remises libraires
         remise = r["Net"] - r["Facture"]
         if remise != 0:
             add_ligne(compte_remise, f"{libelle_base} - Remises libraires",
                       0.0 if remise < 0 else remise,
-                      abs(remise) if remise < 0 else 0.0)
+                      abs(remise) if remise < 0 else 0.0,
+                      isbn_val=isbn)
         # Commissions distribution
-        add_ligne(compte_com_dist, f"{libelle_base} - Com. distribution", r["Commission_distribution"], 0.0)
+        add_ligne(compte_com_dist, f"{libelle_base} - Com. distribution", r["Commission_distribution"], 0.0, isbn_val=isbn)
         # Commissions diffusion
-        add_ligne(compte_com_diff, f"{libelle_base} - Com. diffusion", r["Commission_diffusion"], 0.0)
+        add_ligne(compte_com_diff, f"{libelle_base} - Com. diffusion", r["Commission_diffusion"], 0.0, isbn_val=isbn)
         # Provision retours (681)
         provision_isbn = round(r["Vente"] * 1.055 * 0.10, 2)
-        add_ligne(compte_provision, f"{libelle_base} - Provision retours", provision_isbn, 0.0)
+        add_ligne(compte_provision, f"{libelle_base} - Provision retours", provision_isbn, 0.0, isbn_val=isbn)
+
+        # ============================
         # Reprise 6 mois après (781)
+        # ============================
         date_reprise = date_ecriture + pd.DateOffset(months=6)
-        add_ligne(compte_reprise, f"{libelle_base} - Reprise provision", 0.0, provision_isbn)
-        add_ligne(compte_client, f"{libelle_base} - Reprise provision (contrepartie)", provision_isbn, 0.0)
+        date_reprise = date_reprise.replace(day=1) + pd.offsets.MonthEnd(0)
+        add_ligne(compte_reprise, f"{libelle_base} - Reprise provision", 0.0, provision_isbn, date_ligne=date_reprise, isbn_val=isbn)
+        add_ligne(compte_client, f"{libelle_base} - Reprise provision (contrepartie)", provision_isbn, 0.0, date_ligne=date_reprise, isbn_val=isbn)
 
     df_ecr = pd.DataFrame(ecritures)
 
@@ -166,14 +169,11 @@ if fichier_entree is not None:
     tva_collectee = round(ca_net_total * 0.055, 2)
     tva_com = round(com_total * 0.055, 2)
 
-    # ============================
     # Lignes globales TVA
-    # ============================
     lignes_globales = [
         {"Compte": compte_tva_collectee, "Libelle": f"{libelle_base} - TVA collectée", "Débit": 0.0, "Crédit": tva_collectee},
         {"Compte": compte_tva_com, "Libelle": f"{libelle_base} - TVA déductible commissions", "Débit": tva_com, "Crédit": 0.0},
     ]
-
     df_glob = pd.DataFrame(lignes_globales)
     df_glob["Date"] = date_ecriture.strftime("%d/%m/%Y")
     df_glob["Journal"] = journal
@@ -189,7 +189,6 @@ if fichier_entree is not None:
     diff = round(total_debit - total_credit, 2)
 
     if diff > 0:
-        # Débit > Crédit → créditer 411
         ligne_411 = pd.DataFrame([{
             "Date": date_ecriture.strftime("%d/%m/%Y"),
             "Journal": journal,
@@ -201,7 +200,6 @@ if fichier_entree is not None:
             "Crédit": diff
         }])
     elif diff < 0:
-        # Crédit > Débit → débiter 411
         ligne_411 = pd.DataFrame([{
             "Date": date_ecriture.strftime("%d/%m/%Y"),
             "Journal": journal,
