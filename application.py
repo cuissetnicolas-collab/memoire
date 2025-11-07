@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import streamlit as st
+from pandas.tseries.offsets import MonthEnd
 
 # ============================
 # Interface utilisateur
@@ -116,7 +117,7 @@ if fichier_entree is not None:
 
         # ➤ Reprise de provision 6 mois plus tard dans le compte 781
         if provision_isbn > 0:
-            reprise_date = pd.to_datetime(date_ecriture) + pd.DateOffset(months=6)
+            reprise_date = pd.to_datetime(date_ecriture) + MonthEnd(6)
             ecritures.append({
                 "Date": reprise_date.strftime("%d/%m/%Y"),
                 "Journal": journal,
