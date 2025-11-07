@@ -57,11 +57,9 @@ fichier_entree = st.file_uploader("📂 Importer le fichier Excel BLDD", type=["
 date_ecriture = st.date_input("📅 Date d'écriture")
 journal = st.text_input("📒 Journal", value="VT")
 libelle_base = st.text_input("📝 Libellé", value="VENTES BLDD")
-
-# ✅ Saisie famille analytique
 famille_analytique = st.text_input("🏷️ Famille analytique", value="EDITION")
 
-# Comptes utilisés
+# Comptes
 compte_ca = "701100000"
 compte_retour = "709000000"
 compte_remise = "709100000"
@@ -73,13 +71,9 @@ compte_provision = "681000000"
 compte_reprise = "781000000"
 compte_client = "411100011"
 
-# Saisie montants totaux commissions
+# Commissions globales
 com_distribution_total = st.number_input("Montant total commissions distribution", value=1000.00, format="%.2f")
 com_diffusion_total = st.number_input("Montant total commissions diffusion", value=500.00, format="%.2f")
-
-# Taux commissions
-taux_dist = st.number_input("Taux distribution (%)", value=12.5) / 100
-taux_diff = st.number_input("Taux diffusion (%)", value=9.0) / 100
 
 # ============================
 # Traitement
@@ -101,7 +95,7 @@ if fichier_entree is not None:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).round(2)
 
     # ============================
-    # Calcul commissions
+    # Répartition commissions
     # ============================
     def repartir_commissions(montants, total):
         raw = montants.copy()
@@ -120,9 +114,6 @@ if fichier_entree is not None:
     df["Commission_distribution"] = repartir_commissions(df["Vente"], com_distribution_total)
     df["Commission_diffusion"] = repartir_commissions(df["Net"], com_diffusion_total)
 
-    # ============================
-    # Construction écritures par ISBN
-    # ============================
     ecritures = []
 
     def last_day_of_month(date):
@@ -144,27 +135,26 @@ if fichier_entree is not None:
             })
 
         # CA brut
-        add_ligne(compte_ca, f"{libelle_base} - CA brut", 0.0, max(0, r["Vente"]))
+        add_ligne(compte_ca, f"{libelle_base} - CA brut", 0.0, r["Vente"])
         # Retours
-        add_ligne(compte_retour, f"{libelle_base} - Retours", abs(r["Retour"]), 0.0)
-        # Remises libraires
+        add_ligne(compte_retour, f"{libelle_base} - Retours", r["Retour"], 0.0)
+        # Remises
         remise = r["Net"] - r["Facture"]
         if remise != 0:
             add_ligne(compte_remise, f"{libelle_base} - Remises libraires",
-                      0.0 if remise < 0 else remise,
+                      remise if remise > 0 else 0.0,
                       abs(remise) if remise < 0 else 0.0)
         # Commissions
         add_ligne(compte_com_dist, f"{libelle_base} - Com. distribution", r["Commission_distribution"], 0.0)
         add_ligne(compte_com_diff, f"{libelle_base} - Com. diffusion", r["Commission_diffusion"], 0.0)
-        # Provision et reprise
-        provision_isbn = round(r["Vente"] * 1.055 * 0.10, 2)
-        add_ligne(compte_provision, f"{libelle_base} - Provision retours", provision_isbn, 0.0)
+        # Provision + reprise
+        provision = round(r["Vente"] * 1.055 * 0.10, 2)
+        add_ligne(compte_provision, f"{libelle_base} - Provision retours", provision, 0.0)
         date_reprise = last_day_of_month(date_ecriture + relativedelta(months=6))
-        add_ligne(compte_reprise, f"{libelle_base} - Reprise provision", 0.0, provision_isbn, date_ligne=date_reprise)
-        add_ligne(compte_client, f"{libelle_base} - Contrepartie reprise", provision_isbn, 0.0, date_ligne=date_reprise)
+        add_ligne(compte_reprise, f"{libelle_base} - Reprise provision", 0.0, provision, date_ligne=date_reprise)
 
     # ============================
-    # TVA globale (mêmes colonnes)
+    # TVA globale
     # ============================
     ca_net_total = df["Facture"].sum()
     com_total = df["Commission_distribution"].sum() + df["Commission_diffusion"].sum()
@@ -192,10 +182,31 @@ if fichier_entree is not None:
         "Crédit": 0.0
     })
 
+    # ============================
+    # Ligne unique 411 équilibrante
+    # ============================
+    df_final = pd.DataFrame(ecritures)
+    total_debit = df_final["Débit"].sum()
+    total_credit = df_final["Crédit"].sum()
+    diff = round(total_credit - total_debit, 2)
+
+    if abs(diff) > 0.01:
+        sens = "Débit" if diff < 0 else "Crédit"
+        ecritures.append({
+            "Date": date_ecriture.strftime("%d/%m/%Y"),
+            "Journal": journal,
+            "Compte": compte_client,
+            "Libelle": f"{libelle_base} - Contrepartie client globale",
+            "Famille analytique": famille_analytique,
+            "ISBN": "",
+            "Débit": abs(diff) if sens == "Débit" else 0.0,
+            "Crédit": abs(diff) if sens == "Crédit" else 0.0
+        })
+
     df_final = pd.DataFrame(ecritures)
 
     # ============================
-    # Export unique
+    # Export
     # ============================
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -203,12 +214,11 @@ if fichier_entree is not None:
     buffer.seek(0)
 
     st.download_button(
-        label="📥 Télécharger les écritures (Excel)",
+        "📥 Télécharger les écritures (Excel)",
         data=buffer,
         file_name="Ecritures_BLDD.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Aperçu
     st.subheader("👀 Aperçu des écritures générées")
     st.dataframe(df_final)
