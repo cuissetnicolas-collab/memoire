@@ -30,10 +30,9 @@ compte_provision = "681000000"
 compte_reprise = "781000000"
 compte_client = "411100011"
 
-# Saisie montants totaux commissions et reprise provision
+# Saisie montants totaux commissions
 com_distribution_total = st.number_input("Montant total commissions distribution", value=1000.00, format="%.2f")
 com_diffusion_total = st.number_input("Montant total commissions diffusion", value=500.00, format="%.2f")
-provision_reprise = st.number_input("Montant de reprise de provision (6 mois)", value=0.0, format="%.2f")
 
 # Taux commissions
 taux_dist = st.number_input("Taux distribution (%)", value=12.5) / 100
@@ -145,8 +144,6 @@ if fichier_entree is not None:
     lignes_globales = [
         {"Compte": compte_tva_collectee, "Libelle": f"{libelle_base} - TVA collectée", "Débit": 0.0, "Crédit": tva_collectee},
         {"Compte": compte_tva_com, "Libelle": f"{libelle_base} - TVA déductible commissions", "Débit": tva_com, "Crédit": 0.0},
-        {"Compte": compte_client, "Libelle": f"{libelle_base} - Contrepartie reprise provision", "Débit": 0.0, "Crédit": provision_reprise},
-        {"Compte": compte_reprise, "Libelle": f"{libelle_base} - Reprise provision globale", "Débit": provision_reprise, "Crédit": 0.0},
     ]
 
     df_glob = pd.DataFrame(lignes_globales)
@@ -164,7 +161,6 @@ if fichier_entree is not None:
     diff = round(total_debit - total_credit, 2)
 
     if diff > 0:
-        # Débit > Crédit → créditer 411
         ligne_411 = pd.DataFrame([{
             "Date": date_ecriture.strftime("%d/%m/%Y"),
             "Journal": journal,
@@ -176,7 +172,6 @@ if fichier_entree is not None:
             "Crédit": diff
         }])
     elif diff < 0:
-        # Crédit > Débit → débiter 411
         ligne_411 = pd.DataFrame([{
             "Date": date_ecriture.strftime("%d/%m/%Y"),
             "Journal": journal,
