@@ -2,8 +2,7 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import streamlit as st
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
+from datetime import timedelta
 
 # ============================
 # AUTHENTIFICATION
@@ -25,28 +24,26 @@ def login(username, password):
         st.session_state["name"] = users[username]["name"]
         st.session_state["page"] = "Accueil"
         st.success(f"Bienvenue {st.session_state['name']} 👋")
-        return True
     else:
         st.error("❌ Identifiants incorrects")
-        return False
 
-# ⚠️ Connexion
 if not st.session_state["login"]:
     st.title("🔑 Connexion espace expert-comptable")
     username_input = st.text_input("Identifiant")
     password_input = st.text_input("Mot de passe", type="password")
     if st.button("Connexion"):
-        if login(username_input, password_input):
-            st.experimental_rerun()
+        login(username_input, password_input)
     st.stop()
 
-# ⚡ Bouton Déconnexion
-if st.button("🔒 Déconnexion"):
-    st.session_state["login"] = False
-    st.experimental_rerun()
+# Bouton Déconnexion
+if st.session_state["login"]:
+    if st.button("🔒 Déconnexion"):
+        st.session_state["login"] = False
+        st.success("✅ Déconnecté avec succès.")
+        st.stop()
 
 # ============================
-# Interface utilisateur
+# INTERFACE UTILISATEUR
 # ============================
 st.title("📊 Générateur d'écritures analytiques - BLDD")
 
@@ -68,7 +65,7 @@ compte_com_diff = "622800010"
 compte_tva_collectee = "445710060"
 compte_tva_com = "445660000"
 compte_provision = "681000000"
-compte_reprise = "781000000"  # Reprise automatique
+compte_reprise = "781000000"
 compte_client = "411100011"
 
 # Saisie montants totaux commissions
@@ -80,7 +77,7 @@ taux_dist = st.number_input("Taux distribution (%)", value=12.5) / 100
 taux_diff = st.number_input("Taux diffusion (%)", value=9.0) / 100
 
 # ============================
-# Traitement
+# TRAITEMENT
 # ============================
 if fichier_entree is not None:
     df = pd.read_excel(fichier_entree, header=9, dtype={"ISBN": str})
@@ -112,7 +109,7 @@ if fichier_entree is not None:
         if diff > 0:
             adjust[idx_sorted[:diff]] = 1
         elif diff < 0:
-            adjust[idx_sorted[len(raw) + diff:]] = -1
+            adjust[idx_sorted[len(raw) + diff :]] = -1
         return (cents_floor + adjust) / 100.0
 
     df["Commission_distribution"] = repartir_commissions(df["Vente"], com_distribution_total)
@@ -125,9 +122,9 @@ if fichier_entree is not None:
 
     for _, r in df.iterrows():
         isbn = r["ISBN"]
-        def add_ligne(compte, libelle, debit, credit, date_val=date_ecriture):
+        def add_ligne(compte, libelle, debit, credit):
             ecritures.append({
-                "Date": date_val.strftime("%d/%m/%Y"),
+                "Date": date_ecriture.strftime("%d/%m/%Y"),
                 "Journal": journal,
                 "Compte": compte,
                 "Libelle": libelle,
@@ -154,13 +151,10 @@ if fichier_entree is not None:
         # Provision retours (681)
         provision_isbn = round(r["Vente"] * 1.055 * 0.10, 2)
         add_ligne(compte_provision, f"{libelle_base} - Provision retours", provision_isbn, 0.0)
-
-        # Reprise 6 mois après sur 781
-        date_reprise = date_ecriture + relativedelta(months=6)
-        # Ajustement date fin de mois
-        last_day = (date_reprise + relativedelta(day=31))
-        add_ligne(compte_reprise, f"{libelle_base} - Reprise provision", 0.0, provision_isbn, date_val=last_day)
-        add_ligne(compte_client, f"{libelle_base} - Reprise provision (contrepartie)", provision_isbn, 0.0, date_val=last_day)
+        # Reprise 6 mois après (781)
+        date_reprise = date_ecriture + pd.DateOffset(months=6)
+        add_ligne(compte_reprise, f"{libelle_base} - Reprise provision", 0.0, provision_isbn)
+        add_ligne(compte_client, f"{libelle_base} - Reprise provision (contrepartie)", provision_isbn, 0.0)
 
     df_ecr = pd.DataFrame(ecritures)
 
@@ -172,11 +166,14 @@ if fichier_entree is not None:
     tva_collectee = round(ca_net_total * 0.055, 2)
     tva_com = round(com_total * 0.055, 2)
 
+    # ============================
     # Lignes globales TVA
+    # ============================
     lignes_globales = [
         {"Compte": compte_tva_collectee, "Libelle": f"{libelle_base} - TVA collectée", "Débit": 0.0, "Crédit": tva_collectee},
         {"Compte": compte_tva_com, "Libelle": f"{libelle_base} - TVA déductible commissions", "Débit": tva_com, "Crédit": 0.0},
     ]
+
     df_glob = pd.DataFrame(lignes_globales)
     df_glob["Date"] = date_ecriture.strftime("%d/%m/%Y")
     df_glob["Journal"] = journal
@@ -192,6 +189,7 @@ if fichier_entree is not None:
     diff = round(total_debit - total_credit, 2)
 
     if diff > 0:
+        # Débit > Crédit → créditer 411
         ligne_411 = pd.DataFrame([{
             "Date": date_ecriture.strftime("%d/%m/%Y"),
             "Journal": journal,
@@ -203,6 +201,7 @@ if fichier_entree is not None:
             "Crédit": diff
         }])
     elif diff < 0:
+        # Crédit > Débit → débiter 411
         ligne_411 = pd.DataFrame([{
             "Date": date_ecriture.strftime("%d/%m/%Y"),
             "Journal": journal,
