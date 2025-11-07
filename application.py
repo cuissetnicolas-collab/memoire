@@ -82,13 +82,7 @@ if fichier_entree is not None:
     df.columns = df.columns.str.strip()
     df = df.dropna(subset=["ISBN"]).copy()
 
-    df["ISBN"] = (
-        df["ISBN"].astype(str)
-        .str.strip()
-        .str.replace(r"\.0$", "", regex=True)
-        .str.replace("-", "", regex=False)
-        .str.replace(" ", "", regex=False)
-    )
+    df["ISBN"] = df["ISBN"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).str.replace("-", "").str.replace(" ", "")
 
     for c in ["Vente", "Retour", "Net", "Facture"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).round(2)
@@ -113,6 +107,7 @@ if fichier_entree is not None:
     df["Commission_distribution"] = repartir_commissions(df["Vente"], com_distribution_total)
     df["Commission_diffusion"] = repartir_commissions(df["Net"], com_diffusion_total)
 
+    # Construction écritures
     ecritures = []
 
     def last_day_of_month(date):
@@ -130,52 +125,50 @@ if fichier_entree is not None:
             "Crédit": round(credit,2)
         })
 
-    # Écritures analytiques par ISBN
+    # Traitement par ISBN
     for _, r in df.iterrows():
         isbn = r["ISBN"]
 
         # CA brut
         add_ligne(compte_ca, f"{libelle_base} - CA brut", 0.0, r["Vente"], isbn_val=isbn)
 
-        # Retours (toujours négatif dans fichier → positif au débit)
-        if r["Retour"] != 0:
-            add_ligne(compte_retour, f"{libelle_base} - Retours", abs(r["Retour"]), 0.0, isbn_val=isbn)
+        # Retours → toujours au débit, valeur positive
+        retour_val = abs(r["Retour"])
+        if retour_val != 0:
+            add_ligne(compte_retour, f"{libelle_base} - Retours", retour_val, 0.0, isbn_val=isbn)
 
         # Remises libraires
-        remise = r["Net"] - r["Facture"]
-        if remise != 0:
-            if remise > 0:
-                # positif → débit
-                add_ligne(compte_remise, f"{libelle_base} - Remises libraires", remise, 0.0, isbn_val=isbn)
-            else:
-                # négatif → crédit
-                add_ligne(compte_remise, f"{libelle_base} - Remises libraires", 0.0, abs(remise), isbn_val=isbn)
+        remise_val = r["Net"] - r["Facture"]
+        if remise_val > 0:
+            add_ligne(compte_remise, f"{libelle_base} - Remises libraires", remise_val, 0.0, isbn_val=isbn)
+        elif remise_val < 0:
+            add_ligne(compte_remise, f"{libelle_base} - Remises libraires", 0.0, abs(remise_val), isbn_val=isbn)
 
-        # Commissions distribution & diffusion
+        # Commissions distribution & diffusion (au débit)
         add_ligne(compte_com_dist, f"{libelle_base} - Com. distribution", r["Commission_distribution"], 0.0, isbn_val=isbn)
         add_ligne(compte_com_diff, f"{libelle_base} - Com. diffusion", r["Commission_diffusion"], 0.0, isbn_val=isbn)
 
         # Provision retours
-        provision_isbn = round(r["Vente"] * 1.055 * 0.10, 2)
+        provision_isbn = round(r["Vente"]*1.055*0.10,2)
         add_ligne(compte_provision, f"{libelle_base} - Provision retours", provision_isbn, 0.0, isbn_val=isbn)
 
         # Reprise 6 mois plus tard
         date_reprise = last_day_of_month(date_ecriture + relativedelta(months=6))
         add_ligne(compte_reprise, f"{libelle_base} - Reprise provision", 0.0, provision_isbn, date_ligne=date_reprise, isbn_val=isbn)
 
-    # ============================
-    # Ligne 411 globale par date pour équilibrer
-    # ============================
-    df_temp = pd.DataFrame(ecritures)
-    for date_val in df_temp["Date"].unique():
-        total_debit = df_temp.loc[df_temp["Date"] == date_val, "Débit"].sum()
-        total_credit = df_temp.loc[df_temp["Date"] == date_val, "Crédit"].sum()
-        diff = round(total_debit - total_credit, 2)
+    # Calcul 411 par date pour équilibrer
+    df_ecr = pd.DataFrame(ecritures)
+    df_ecr["Date_obj"] = pd.to_datetime(df_ecr["Date"], format="%d/%m/%Y")
+    for date_val in df_ecr["Date_obj"].dt.date.unique():
+        df_date = df_ecr[df_ecr["Date_obj"].dt.date == date_val]
+        total_debit = df_date["Débit"].sum()
+        total_credit = df_date["Crédit"].sum()
+        diff = round(total_credit - total_debit,2)
         if diff != 0:
-            if diff > 0:
-                add_ligne(compte_client, f"{libelle_base} - Contrepartie client", 0.0, diff, date_ligne=pd.to_datetime(date_val))
-            else:
-                add_ligne(compte_client, f"{libelle_base} - Contrepartie client", -diff, 0.0, date_ligne=pd.to_datetime(date_val))
+            add_ligne(compte_client, f"{libelle_base} - Client global", diff if diff > 0 else 0.0, -diff if diff < 0 else 0.0, date_ligne=pd.to_datetime(date_val))
+
+    df_final = pd.DataFrame(ecritures)
+    df_final = df_final.drop(columns=["Date_obj"], errors="ignore")
 
     # TVA globale
     ca_net_total = df["Facture"].sum()
@@ -186,15 +179,15 @@ if fichier_entree is not None:
     lignes_tva = [
         {"Date": date_ecriture.strftime("%d/%m/%Y"), "Journal": journal, "Compte": compte_tva_collectee,
          "Libelle": f"{libelle_base} - TVA collectée", "Famille analytique": famille_analytique,
-         "ISBN": "", "Débit":0.0, "Crédit": tva_collectee},
+         "ISBN": "", "Débit": 0.0, "Crédit": tva_collectee},
         {"Date": date_ecriture.strftime("%d/%m/%Y"), "Journal": journal, "Compte": compte_tva_com,
          "Libelle": f"{libelle_base} - TVA déductible commissions", "Famille analytique": famille_analytique,
-         "ISBN": "", "Débit": tva_com, "Crédit":0.0},
+         "ISBN": "", "Débit": tva_com, "Crédit": 0.0},
     ]
-    df_final = pd.concat([pd.DataFrame(ecritures), pd.DataFrame(lignes_tva)], ignore_index=True)
+    df_final = pd.concat([df_final, pd.DataFrame(lignes_tva)], ignore_index=True)
 
     # ============================
-    # 📤 Export
+    # 📤 Export Excel
     # ============================
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
