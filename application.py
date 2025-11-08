@@ -19,6 +19,8 @@ def login(username, password):
         "aurore": {"password": "12345", "name": "Aurore Demoulin"},
         "laure.froidefond": {"password": "Laure Froidefond"},
         "Bruno": {"password": "Toto1963$", "name": "Toto El Gringo"},
+        "Manana": {"password": "193827", "name": "Manana"},
+        "Nicolas": {"password": "29071989", "name": "Nicolas"},
     }
     if username in users and password == users[username]["password"]:
         st.session_state["login"] = True
