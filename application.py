@@ -61,6 +61,8 @@ if fichier_entree is not None:
     # Calcul commissions
     # ============================
     def repartir_commissions(montants, total):
+        if montants.sum() == 0:
+            return np.zeros(len(montants))
         raw = montants.copy()
         scaled = raw * (total / raw.sum())
         cents_floor = np.floor(scaled * 100).astype(int)
@@ -78,15 +80,16 @@ if fichier_entree is not None:
     df["Commission_diffusion"] = repartir_commissions(df["Net"], com_diffusion_total)
 
     # ============================
-    # Construction écritures par ISBN
+    # Construction écritures
     # ============================
     ecritures = []
 
     for _, r in df.iterrows():
         isbn = r["ISBN"]
-        def add_ligne(compte, libelle, debit, credit):
+
+        def add_ligne(date, compte, libelle, debit, credit):
             ecritures.append({
-                "Date": date_ecriture.strftime("%d/%m/%Y"),
+                "Date": date.strftime("%d/%m/%Y"),
                 "Journal": journal,
                 "Compte": compte,
                 "Libelle": libelle,
@@ -96,106 +99,94 @@ if fichier_entree is not None:
                 "Crédit": round(credit, 2)
             })
 
-        # CA brut
-        add_ligne(compte_ca, f"{libelle_base} - CA brut", 0.0, max(0, r["Vente"]))
-        # Retours
-        add_ligne(compte_retour, f"{libelle_base} - Retours", abs(r["Retour"]), 0.0)
-        # Remises libraires
+        # === Écritures du mois ===
+        add_ligne(date_ecriture, compte_ca, f"{libelle_base} - CA brut", 0.0, max(0, r["Vente"]))
+        add_ligne(date_ecriture, compte_retour, f"{libelle_base} - Retours", abs(r["Retour"]), 0.0)
         remise = r["Net"] - r["Facture"]
         if remise != 0:
-            add_ligne(compte_remise, f"{libelle_base} - Remises libraires",
-                      0.0 if remise < 0 else remise,
+            add_ligne(date_ecriture, compte_remise, f"{libelle_base} - Remises libraires",
+                      remise if remise > 0 else 0.0,
                       abs(remise) if remise < 0 else 0.0)
-        # Commissions distribution
-        add_ligne(compte_com_dist, f"{libelle_base} - Com. distribution", r["Commission_distribution"], 0.0)
-        # Commissions diffusion
-        add_ligne(compte_com_diff, f"{libelle_base} - Com. diffusion", r["Commission_diffusion"], 0.0)
-        # Provision retours (681)
-        provision_isbn = round(r["Vente"] * 1.055 * 0.10, 2)
-        add_ligne(compte_provision, f"{libelle_base} - Provision retours", provision_isbn, 0.0)
+        add_ligne(date_ecriture, compte_com_dist, f"{libelle_base} - Com. distribution", r["Commission_distribution"], 0.0)
+        add_ligne(date_ecriture, compte_com_diff, f"{libelle_base} - Com. diffusion", r["Commission_diffusion"], 0.0)
 
-        # ➤ Reprise de provision 6 mois plus tard dans le compte 781
-        if provision_isbn > 0:
+        # Provision (681)
+        provision = round(r["Vente"] * 1.055 * 0.10, 2)
+        add_ligne(date_ecriture, compte_provision, f"{libelle_base} - Provision retours", provision, 0.0)
+
+        # === Reprise (6 mois plus tard) ===
+        if provision > 0:
             reprise_date = pd.to_datetime(date_ecriture) + MonthEnd(6)
-            ecritures.append({
-                "Date": reprise_date.strftime("%d/%m/%Y"),
-                "Journal": journal,
-                "Compte": compte_reprise,
-                "Libelle": f"{libelle_base} - Reprise provision ISBN {isbn}",
-                "Famille analytique": famille_analytique,
-                "ISBN": isbn,
-                "Débit": 0.0,
-                "Crédit": provision_isbn
-            })
+            add_ligne(reprise_date, compte_reprise, f"{libelle_base} - Reprise provision ISBN {isbn}", 0.0, provision)
 
     df_ecr = pd.DataFrame(ecritures)
 
     # ============================
-    # Totaux globaux
+    # Lignes TVA globales (mois)
     # ============================
     ca_net_total = df["Facture"].sum()
     com_total = df["Commission_distribution"].sum() + df["Commission_diffusion"].sum()
     tva_collectee = round(ca_net_total * 0.055, 2)
     tva_com = round(com_total * 0.055, 2)
 
-    # ============================
-    # Lignes globales
-    # ============================
     lignes_globales = [
-        {"Compte": compte_tva_collectee, "Libelle": f"{libelle_base} - TVA collectée", "Débit": 0.0, "Crédit": tva_collectee},
-        {"Compte": compte_tva_com, "Libelle": f"{libelle_base} - TVA déductible commissions", "Débit": tva_com, "Crédit": 0.0},
+        {"Date": date_ecriture.strftime("%d/%m/%Y"), "Journal": journal, "Compte": compte_tva_collectee,
+         "Libelle": f"{libelle_base} - TVA collectée", "Famille analytique": famille_analytique,
+         "ISBN": "", "Débit": 0.0, "Crédit": tva_collectee},
+        {"Date": date_ecriture.strftime("%d/%m/%Y"), "Journal": journal, "Compte": compte_tva_com,
+         "Libelle": f"{libelle_base} - TVA déductible commissions", "Famille analytique": famille_analytique,
+         "ISBN": "", "Débit": tva_com, "Crédit": 0.0}
     ]
 
     df_glob = pd.DataFrame(lignes_globales)
-    df_glob["Date"] = date_ecriture.strftime("%d/%m/%Y")
-    df_glob["Journal"] = journal
-    df_glob["Famille analytique"] = famille_analytique
-    df_glob["ISBN"] = ""
+    df_ecr = pd.concat([df_ecr, df_glob], ignore_index=True)
 
     # ============================
-    # Solde final 411 pour équilibrage automatique
+    # Ligne 411 (écriture du mois)
     # ============================
-    df_temp = pd.concat([df_ecr, df_glob], ignore_index=True)
-    total_debit = df_temp["Débit"].sum()
-    total_credit = df_temp["Crédit"].sum()
-    diff = round(total_debit - total_credit, 2)
-
-    if diff > 0:
-        ligne_411 = pd.DataFrame([{
-            "Date": date_ecriture.strftime("%d/%m/%Y"),
-            "Journal": journal,
-            "Compte": compte_client,
-            "Libelle": f"{libelle_base} - Contrepartie client",
-            "Famille analytique": famille_analytique,
-            "ISBN": "",
-            "Débit": 0.0,
-            "Crédit": diff
-        }])
-    elif diff < 0:
-        ligne_411 = pd.DataFrame([{
-            "Date": date_ecriture.strftime("%d/%m/%Y"),
-            "Journal": journal,
-            "Compte": compte_client,
-            "Libelle": f"{libelle_base} - Contrepartie client",
-            "Famille analytique": famille_analytique,
-            "ISBN": "",
-            "Débit": -diff,
-            "Crédit": 0.0
-        }])
-    else:
-        ligne_411 = pd.DataFrame()
+    df_mois = df_ecr[df_ecr["Date"] == date_ecriture.strftime("%d/%m/%Y")]
+    diff_mois = round(df_mois["Débit"].sum() - df_mois["Crédit"].sum(), 2)
+    ligne_411_mois = {
+        "Date": date_ecriture.strftime("%d/%m/%Y"),
+        "Journal": journal,
+        "Compte": compte_client,
+        "Libelle": f"{libelle_base} - Contrepartie client (mois)",
+        "Famille analytique": famille_analytique,
+        "ISBN": "",
+        "Débit": 0.0 if diff_mois > 0 else abs(diff_mois),
+        "Crédit": diff_mois if diff_mois > 0 else 0.0
+    }
 
     # ============================
-    # Fusion finale
+    # Ligne 411 (écriture de reprise)
     # ============================
-    df_final = pd.concat([df_ecr, df_glob, ligne_411], ignore_index=True)
+    date_reprise = (pd.to_datetime(date_ecriture) + MonthEnd(6)).strftime("%d/%m/%Y")
+    df_reprise = df_ecr[df_ecr["Date"] == date_reprise]
+    diff_reprise = round(df_reprise["Débit"].sum() - df_reprise["Crédit"].sum(), 2)
+    ligne_411_reprise = {
+        "Date": date_reprise,
+        "Journal": journal,
+        "Compte": compte_client,
+        "Libelle": f"{libelle_base} - Contrepartie client (reprise)",
+        "Famille analytique": famille_analytique,
+        "ISBN": "",
+        "Débit": 0.0 if diff_reprise > 0 else abs(diff_reprise),
+        "Crédit": diff_reprise if diff_reprise > 0 else 0.0
+    }
 
+    df_final = pd.concat([df_ecr, pd.DataFrame([ligne_411_mois, ligne_411_reprise])], ignore_index=True)
+
+    # ============================
+    # Vérification équilibre global
+    # ============================
     total_debit = df_final["Débit"].sum()
     total_credit = df_final["Crédit"].sum()
-    if abs(total_debit - total_credit) > 0.01:
-        st.error(f"⚠️ Écritures déséquilibrées : Débit={total_debit}, Crédit={total_credit}")
-    else:
+    ecart = round(total_debit - total_credit, 2)
+
+    if ecart == 0:
         st.success("✅ Écritures équilibrées !")
+    else:
+        st.error(f"⚠️ Écart global : {ecart} € (Débit={total_debit}, Crédit={total_credit})")
 
     # ============================
     # Export Excel
@@ -212,6 +203,5 @@ if fichier_entree is not None:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Aperçu
     st.subheader("👀 Aperçu des écritures générées")
     st.dataframe(df_final)
