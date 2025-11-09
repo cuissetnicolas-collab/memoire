@@ -64,7 +64,7 @@ if fichier_entree is not None:
                 "Date": reprise_date.strftime("%d/%m/%Y"),
                 "Journal": journal,
                 "Compte": compte_reprise,
-                "Libelle": f"{libelle_base} {isbn}",
+                "Libelle": libelle_base,
                 "Famille analytique": famille_analytique,
                 "ISBN": isbn,
                 "Débit": 0.0,
