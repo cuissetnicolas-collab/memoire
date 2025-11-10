@@ -24,7 +24,7 @@ famille_analytique = st.text_input("🏷️ Famille analytique", value="EDITION"
 
 # Comptes comptables
 compte_reprise = "781000000"
-compte_client = "411100011"
+compte_client = "467100000"  # ✅ remplacé ici
 
 # ============================
 # Traitement principal
@@ -74,12 +74,12 @@ if fichier_entree is not None:
     df_ecr = pd.DataFrame(ecritures)
 
     # ============================
-    # Ligne de contrepartie client (411)
+    # Ligne de contrepartie client (467)
     # ============================
     total_credit = df_ecr["Crédit"].sum()
     if total_credit > 0:
         reprise_date = pd.to_datetime(date_origine) + MonthEnd(6)
-        ligne_411 = pd.DataFrame([{
+        ligne_467 = pd.DataFrame([{
             "Date": reprise_date.strftime("%d/%m/%Y"),
             "Journal": journal,
             "Compte": compte_client,
@@ -89,7 +89,7 @@ if fichier_entree is not None:
             "Débit": total_credit,
             "Crédit": 0.0
         }])
-        df_final = pd.concat([df_ecr, ligne_411], ignore_index=True)
+        df_final = pd.concat([df_ecr, ligne_467], ignore_index=True)
     else:
         df_final = df_ecr
 
