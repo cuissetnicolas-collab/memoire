@@ -74,7 +74,7 @@ if fichier_entree is not None:
     df_ecr = pd.DataFrame(ecritures)
 
     # ============================
-    # Ligne de contrepartie client (467)
+    # Ligne de contrepartie (467)
     # ============================
     total_credit = df_ecr["Crédit"].sum()
     if total_credit > 0:
@@ -83,7 +83,7 @@ if fichier_entree is not None:
             "Date": reprise_date.strftime("%d/%m/%Y"),
             "Journal": journal,
             "Compte": compte_client,
-            "Libelle": f"{libelle_base} - Contrepartie client",
+            "Libelle": libelle_base,  # ✅ plus de mention "contrepartie client"
             "Famille analytique": famille_analytique,
             "ISBN": "",
             "Débit": total_credit,
