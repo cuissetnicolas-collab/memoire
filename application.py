@@ -481,14 +481,6 @@ if not st.session_state["login"]:
                 st.rerun()
             else:
                 st.error("❌ Identifiants incorrects")
-        st.divider()
-        st.markdown("**Accès mobile**")
-        qr = qrcode.QRCode(version=1, box_size=4, border=2)
-        qr.add_data(APP_URL)
-        qr.make(fit=True)
-        img_qr = qr.make_image(fill_color="black", back_color="white")
-        buf = BytesIO(); img_qr.save(buf, format="PNG")
-        st.image(buf.getvalue(), width=120)
     st.stop()
 
 # ============================================================
@@ -947,7 +939,7 @@ if role == "ec" and page == "🏠 Accueil":
     st.markdown(f"*Bienvenue, **{st.session_state['name']}***")
     st.divider()
 
-    col_main, col_qr = st.columns([3, 1])
+    col_main = st.container()
     with col_main:
         st.markdown("### Comment démarrer ?")
         c1, c2, c3, c4 = st.columns(4)
@@ -972,14 +964,6 @@ if role == "ec" and page == "🏠 Accueil":
                 "Elle traite le relevé mensuel de votre diffuseur et génère les écritures comptables "
                 "prêtes à importer dans votre logiciel avant utilisation de VISION EDITION.")
 
-    with col_qr:
-        st.markdown("### Accès mobile")
-        qr2 = qrcode.QRCode(version=1, box_size=4, border=2)
-        qr2.add_data(APP_URL); qr2.make(fit=True)
-        img2 = qr2.make_image(fill_color="black", back_color="white")
-        b2 = BytesIO(); img2.save(b2, format="PNG")
-        st.image(b2.getvalue(), width=160)
-        st.caption("Scanner pour accès mobile")
 
 # ============================================================
 # PAGE : GESTION DES DOSSIERS
@@ -4161,7 +4145,7 @@ elif role == "ec" and page == "📋 Plan d'action":
 st.divider()
 st.markdown(
     "<div style='text-align:center;color:#888;font-size:12px'>"
-    "© 2026 Nicolas CUISSET — VISION EDITION — Mémoire d'expertise comptable"
+    "© 2025 Nicolas CUISSET — VISION EDITION — Mémoire d'expertise comptable"
     "</div>",
     unsafe_allow_html=True
 )
