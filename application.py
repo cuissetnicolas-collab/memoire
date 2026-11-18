@@ -106,6 +106,11 @@ def verifier_login(username, password, role_attendu=None):
     """Vérifie un login EC ou dirigeant selon le dossier actif."""
     init_cabinet()
     cab = st.session_state["cabinet"]
+    # Saisie tolérante (claviers de téléphone : majuscule initiale, espaces ajoutés)
+    username = (username or "").strip()
+    password = (password or "").strip()
+    if username.lower() == DEMO_LOGIN:
+        username = DEMO_LOGIN
     # Vérif EC
     ec = cab["ec_users"].get(username)
     if ec and ec["pw_hash"] == _hash(password):
@@ -442,6 +447,8 @@ if not st.session_state["login"]:
             if res["ok"]:
                 st.session_state["login"] = True
                 st.session_state["role"] = res["role"]
+                if username_input.strip().lower() == DEMO_LOGIN:
+                    username_input = DEMO_LOGIN
                 st.session_state["username"] = username_input
                 st.session_state["name"] = res["name"]
                 st.session_state["dossier_id"] = res.get("dossier_id")
