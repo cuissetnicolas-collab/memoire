@@ -323,6 +323,7 @@ def creer_session_demo():
     st.session_state["sidebar_dossier_sel"] = "demo"
     st.session_state["is_demo"] = True
     st.session_state["demo_a_charger"] = True
+    st.session_state["demo_ouvrir_tdb"] = True
 
 
 # ============================================================
@@ -518,7 +519,9 @@ with st.sidebar:
             "📄 Rapport de pilotage",
             "📋 Plan d'action"
         ]
-        page = st.selectbox("Navigation", pages_ec)
+        if st.session_state.pop("demo_ouvrir_tdb", False):
+            st.session_state["nav_ec"] = "📈 Tableau de bord éditorial"
+        page = st.selectbox("Navigation", pages_ec, key="nav_ec")
         st.divider()
         st.session_state["mode_anonyme"] = st.checkbox(
             "🕶️ Mode démonstration", value=st.session_state.get("mode_anonyme", False)
