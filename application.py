@@ -40,7 +40,7 @@ try:
 except ImportError:
     DOCX_AVAILABLE = False
 
-APP_URL = "https://outilaccompagnementmaisonsedition-lyvgltfbwtqo4m9tdmzofu.streamlit.app/"
+APP_URL = "https://memoire-k2amwweuat4a84w9pukppt.streamlit.app/"
 
 # ============================================================
 # HELPERS FORMAT FR
