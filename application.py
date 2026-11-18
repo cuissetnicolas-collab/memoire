@@ -4145,7 +4145,7 @@ elif role == "ec" and page == "📋 Plan d'action":
 st.divider()
 st.markdown(
     "<div style='text-align:center;color:#888;font-size:12px'>"
-    "© 2025 Nicolas CUISSET — VISION EDITION — Mémoire d'expertise comptable"
+    "© 2026 Nicolas CUISSET — VISION EDITION — Mémoire d'expertise comptable"
     "</div>",
     unsafe_allow_html=True
 )
