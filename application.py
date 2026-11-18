@@ -120,7 +120,141 @@ def verifier_login(username, password, role_attendu=None):
     return {"ok": False}
 
 
+# Jeu de données de démonstration (annexe 26) et sa configuration
+import os as _os
+DEMO_FICHIER = "donnees_demo_annexe26.xlsx"
+DEMO_CONFIG = json.loads(r'''{
+    "mapping": {
+        "Numéro du compte": "Compte",
+        "Débit": "Débit",
+        "Crédit": "Crédit",
+        "Date": "Date",
+        "Libellé": "Libellé",
+        "Code journal": "Journal",
+        "Famille de catégories : EDITION": "Famille_Analytique",
+        "Catégorie : EDITION": "Code_Analytique",
+        "Famille de catégories : AUTEUR": "Famille_Analytique_2",
+        "Catégorie : AUTEUR": "Code_Analytique_2"
+    },
+    "param_comptes": {
+        "ventes": [
+            "701"
+        ],
+        "ventes_distributeur": [
+            "7011"
+        ],
+        "retours": [
+            "709"
+        ],
+        "remises": [
+            "7091"
+        ],
+        "charges": [
+            "6"
+        ],
+        "provisions_reprises": [
+            "781"
+        ],
+        "charges_imputees": "Oui",
+        "detail_charges": {
+            "Variation de stock": [
+                "603"
+            ],
+            "Droits d'auteur": [
+                "6043"
+            ],
+            "Commercialisation": [
+                "6228"
+            ],
+            "Structure/gérant": [
+                "641"
+            ],
+            "Provision pour retour": [
+                "681"
+            ],
+            "Contenu": [],
+            "Fabrication": []
+        },
+        "contenu_fabrication_mixte": {
+            "comptes": [
+                "605"
+            ],
+            "mots_cles_fabrication": [
+                "REPROGRAPHIE",
+                "IMPRIM",
+                "PRINT",
+                "FACONNAGE"
+            ]
+        },
+        "stock": [
+            "603"
+        ]
+    },
+    "familles_cols": [
+        "Famille_Analytique",
+        "Famille_Analytique_2"
+    ],
+    "codes_cols": [
+        "Code_Analytique",
+        "Code_Analytique_2"
+    ],
+    "noms_familles_actives": [
+        "EDITION",
+        "AUTEURS"
+    ],
+    "labels_indirect": {
+        "charges": "CHARGES INDIRECTES",
+        "produits": "PRODUITS INDIRECTS"
+    }
+}''')
+
+
 def charger_donnees_demo():
+    """Charge le jeu de données de l'annexe 26 avec son paramétrage et génère le socle.
+    Si le fichier est absent du dépôt, utilise les données fictives d'origine."""
+    chemin = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), DEMO_FICHIER)
+    if not _os.path.exists(chemin):
+        _generer_donnees_fictives()
+        return
+    df = pd.read_excel(chemin, header=0)
+    cfg = DEMO_CONFIG
+    mapping = {k: v for k, v in cfg["mapping"].items() if k in df.columns}
+    familles_cols = cfg["familles_cols"]
+    codes_cols = cfg["codes_cols"]
+    df = df.rename(columns=mapping)
+    for col in familles_cols + codes_cols + ["Libellé", "Journal"]:
+        if col not in df.columns: df[col] = ""
+        else: df[col] = df[col].fillna("")
+    df["Date"]   = pd.to_datetime(df["Date"], errors="coerce")
+    df["Débit"]  = pd.to_numeric(df["Débit"], errors="coerce").fillna(0)
+    df["Crédit"] = pd.to_numeric(df["Crédit"], errors="coerce").fillna(0)
+    df["Compte"] = df["Compte"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    group_cols = ["Compte"] + familles_cols + codes_cols + ["Date"]
+    if "Libellé" in df.columns: group_cols.append("Libellé")
+    if "Journal" in df.columns: group_cols.append("Journal")
+    pivot = df.groupby(group_cols, as_index=False).agg({"Débit": "sum", "Crédit": "sum"})
+    pivot = normaliser_codes_isbn(pivot)
+    st.session_state["df_comptables"] = pd.read_excel(chemin, header=0)
+    st.session_state["df_source_mappe"] = df
+    st.session_state["df_pivot"] = pivot
+    st.session_state["df_pivot_brut"] = pivot.copy()
+    st.session_state["param_comptes"] = cfg["param_comptes"]
+    st.session_state["labels_indirect"] = cfg["labels_indirect"]
+    st.session_state["familles_cols"] = familles_cols
+    st.session_state["codes_cols"] = codes_cols
+    st.session_state["noms_familles_actives"] = cfg["noms_familles_actives"]
+    st.session_state["repartition_active"] = False
+    did = st.session_state.get("dossier_id")
+    if did:
+        dos = get_dossier(did)
+        if dos:
+            dos["param_comptes"] = cfg["param_comptes"]
+            dos["mapping"] = mapping
+            dos["labels_indirect"] = cfg["labels_indirect"]
+            save_dossier(did, dos)
+
+
+def _generer_donnees_fictives():
     """Génère un jeu de données fictif (graine fixe) et prépare directement le socle analytique."""
     np.random.seed(42)
     isbns = [f"978-2-{i:04d}-{j:04d}-{k}" for i,j,k in [
@@ -173,11 +307,11 @@ def creer_session_demo():
     cab = st.session_state["cabinet"]
     if "demo" not in cab["dossiers"]:
         cab["dossiers"]["demo"] = {
-            "nom": "Maison d'édition démo",
+            "nom": "Maison d'édition démo (annexe 26)",
             "dirigeant": "Dirigeant démo",
-            "exercice": "2024",
-            "periode_debut": "01/01/2024",
-            "periode_fin": "31/12/2024",
+            "exercice": "2025/2026",
+            "periode_debut": "01/04/2025",
+            "periode_fin": "31/03/2026",
             "email_dirigeant": "",
             "param_comptes": {},
             "mapping": {},
@@ -187,8 +321,8 @@ def creer_session_demo():
         }
     st.session_state["dossier_id"] = "demo"
     st.session_state["sidebar_dossier_sel"] = "demo"
-    charger_donnees_demo()
     st.session_state["is_demo"] = True
+    st.session_state["demo_a_charger"] = True
 
 
 # ============================================================
@@ -769,6 +903,10 @@ def check_pivot():
     dos = get_dossier(st.session_state["dossier_id"])
     st.info(f"📁 **{dos['nom']}** — {dos.get('exercice','')}")
     return st.session_state["df_pivot"].copy(), st.session_state["param_comptes"]
+
+# Chargement différé des données du compte de démonstration
+if st.session_state.pop("demo_a_charger", False):
+    charger_donnees_demo()
 
 if role == "ec" and page == "🏠 Accueil":
     st.title("📚 VISION EDITION")
