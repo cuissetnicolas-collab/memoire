@@ -307,6 +307,28 @@ def _generer_donnees_fictives():
     st.session_state["repartition_active"] = False
 
 
+def creer_dossier_preconfigure():
+    """Compte cabinet : dossier « L'Édition Libre » avec le paramétrage de l'annexe 26 déjà enregistré."""
+    cab = st.session_state["cabinet"]
+    if "edlibre" not in cab["dossiers"]:
+        cab["dossiers"]["edlibre"] = {
+            "nom": "L'Édition Libre",
+            "dirigeant": "Dirigeant",
+            "exercice": "2025/2026",
+            "periode_debut": "01/04/2025",
+            "periode_fin": "31/03/2026",
+            "email_dirigeant": "",
+            "param_comptes": DEMO_CONFIG["param_comptes"],
+            "mapping": DEMO_CONFIG["mapping"],
+            "labels_indirect": DEMO_CONFIG["labels_indirect"],
+            "noms_familles_actives": DEMO_CONFIG["noms_familles_actives"],
+            "dirigeant_users": {},
+            "notifications": []
+        }
+    st.session_state["dossier_id"] = "edlibre"
+    st.session_state["sidebar_dossier_sel"] = "edlibre"
+
+
 def creer_session_demo():
     """Compte de démonstration : crée un dossier prêt à l'emploi avec les données de démonstration."""
     cab = st.session_state["cabinet"]
@@ -454,6 +476,8 @@ if not st.session_state["login"]:
                 st.session_state["dossier_id"] = res.get("dossier_id")
                 if username_input == DEMO_LOGIN:
                     creer_session_demo()
+                elif res["role"] == "ec":
+                    creer_dossier_preconfigure()
                 st.rerun()
             else:
                 st.error("❌ Identifiants incorrects")
@@ -1283,6 +1307,45 @@ elif role == "ec" and page == "⚙️ Paramétrage analytique":
     saved_params = dos.get("param_comptes", {})
     saved_mapping = dos.get("mapping", {})
 
+    # Pré-remplissage complet depuis le dossier (une seule fois par dossier et par session)
+    _flag_prefill = f"prefill_done_{st.session_state['dossier_id']}"
+    if saved_mapping and not st.session_state.get(_flag_prefill):
+        _inv = {v: k for k, v in saved_mapping.items()}
+        for _key, _cible in [("map_compte_col","Compte"),("map_debit_col","Débit"),("map_credit_col","Crédit"),
+                             ("map_date_col","Date"),("map_libelle_col","Libellé"),("map_journal_col","Journal")]:
+            if _inv.get(_cible) in columns:
+                st.session_state[_key] = _inv[_cible]
+        _fams, _i = [], 0
+        while True:
+            _suf = "" if _i == 0 else f"_{_i+1}"
+            _fc, _cc = _inv.get(f"Famille_Analytique{_suf}"), _inv.get(f"Code_Analytique{_suf}")
+            if not _fc and not _cc:
+                break
+            _fams.append((_fc, _cc)); _i += 1
+        _noms_sugg = ["EDITION","COMMUNICATION","Types de dépenses / revenus","AUTEUR"]
+        _noms = dos.get("noms_familles_actives") or _noms_sugg
+        st.session_state["map_nb_familles"] = max(1, len(_fams))
+        for _j in range(4):
+            st.session_state[f"nom_famille_{_j}"] = _noms[_j] if _j < len(_noms) else _noms_sugg[_j]
+        for _j, (_fc, _cc) in enumerate(_fams):
+            if _fc in columns: st.session_state[f"famille_col_{_j}"] = _fc
+            if _cc in columns: st.session_state[f"code_col_{_j}"] = _cc
+        _dc = saved_params.get("detail_charges") or {}
+        for _key, _nat in [("cpt_variation_stock","Variation de stock"),("cpt_droits_auteur_detail","Droits d'auteur"),
+                           ("cpt_commercialisation","Commercialisation"),("cpt_structure","Structure/gérant"),
+                           ("cpt_dotations","Provision pour retour"),("cpt_contenu","Contenu"),("cpt_fabrication","Fabrication")]:
+            st.session_state[_key] = ",".join(_dc.get(_nat) or [])
+        _mx = saved_params.get("contenu_fabrication_mixte") or {}
+        st.session_state["cpt_mixte_contenu_fab"] = ",".join(_mx.get("comptes") or [])
+        st.session_state["cpt_mots_cles_fab"] = ",".join(_mx.get("mots_cles_fabrication") or ["REPROGRAPHIE","IMPRIM","PRINT","FACONNAGE"])
+        if saved_params.get("charges_imputees") in ("Oui","Non"):
+            st.session_state["map_charges_imputees"] = saved_params["charges_imputees"]
+        st.session_state[_flag_prefill] = True
+    st.session_state.setdefault("map_nb_familles", 1)
+    st.session_state.setdefault("cpt_mots_cles_fab", "REPROGRAPHIE,IMPRIM,PRINT,FACONNAGE")
+    for _j, _n in enumerate(["EDITION","COMMUNICATION","Types de dépenses / revenus","AUTEUR"]):
+        st.session_state.setdefault(f"nom_famille_{_j}", _n)
+
     with st.expander("📥 Recharger une configuration JSON sauvegardée", expanded=False):
         fconfig = st.file_uploader("Fichier JSON de configuration", type=["json"], key="up_config_param")
         if fconfig:
@@ -1339,24 +1402,24 @@ elif role == "ec" and page == "⚙️ Paramétrage analytique":
         )
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            cpt_stock   = st.text_input("Variation de stock", value=saved_params.get("detail_charges",{}).get("Variation de stock",[""])[0] if saved_params.get("detail_charges") else "", key="cpt_variation_stock", help="Ex. 603")
-            cpt_droits  = st.text_input("Droits d'auteur", value="", key="cpt_droits_auteur_detail", help="Ex. 604300000")
-            cpt_comm    = st.text_input("Commercialisation", value="", key="cpt_commercialisation", help="Ex. 645106,6228")
-            cpt_struct  = st.text_input("Structure / gérant", value="", key="cpt_structure", help="Ex. 6411,6451")
+            cpt_stock   = st.text_input("Variation de stock", key="cpt_variation_stock", help="Ex. 603")
+            cpt_droits  = st.text_input("Droits d'auteur", key="cpt_droits_auteur_detail", help="Ex. 604300000")
+            cpt_comm    = st.text_input("Commercialisation", key="cpt_commercialisation", help="Ex. 645106,6228")
+            cpt_struct  = st.text_input("Structure / gérant", key="cpt_structure", help="Ex. 6411,6451")
         with col_d2:
-            cpt_prov_d  = st.text_input("Provision pour retour (dotation)", value="", key="cpt_dotations", help="Ex. 6810")
-            cpt_contenu = st.text_input("Contenu (préparation éditoriale, prépresse)", value="", key="cpt_contenu")
-            cpt_fab     = st.text_input("Fabrication (impression, façonnage)", value="", key="cpt_fabrication", help="Ex. 605")
-            cpt_mixte   = st.text_input("Compte mixte contenu/fabrication (scindé par mot-clé)", value="", key="cpt_mixte_contenu_fab", help="Ex. 604 — scindé automatiquement par mot-clé dans le libellé")
-            cpt_mots_cles = st.text_input("Mots-clés fabrication", value="REPROGRAPHIE,IMPRIM,PRINT,FACONNAGE", key="cpt_mots_cles_fab")
+            cpt_prov_d  = st.text_input("Provision pour retour (dotation)", key="cpt_dotations", help="Ex. 6810")
+            cpt_contenu = st.text_input("Contenu (préparation éditoriale, prépresse)", key="cpt_contenu")
+            cpt_fab     = st.text_input("Fabrication (impression, façonnage)", key="cpt_fabrication", help="Ex. 605")
+            cpt_mixte   = st.text_input("Compte mixte contenu/fabrication (scindé par mot-clé)", key="cpt_mixte_contenu_fab", help="Ex. 604 — scindé automatiquement par mot-clé dans le libellé")
+            cpt_mots_cles = st.text_input("Mots-clés fabrication", key="cpt_mots_cles_fab")
 
     st.subheader("Familles analytiques")
-    nb_familles = st.number_input("Nombre de familles", min_value=1, max_value=4, value=1, step=1, key="map_nb_familles")
+    nb_familles = st.number_input("Nombre de familles", min_value=1, max_value=4, step=1, key="map_nb_familles")
     familles_mapping = []
     noms_suggestion = ["EDITION","COMMUNICATION","Types de dépenses / revenus","AUTEUR"]
     for i in range(int(nb_familles)):
         fc1,fc2,fc3 = st.columns(3)
-        nom_f = fc1.text_input(f"Famille {i+1}", value=noms_suggestion[i] if i<4 else "", key=f"nom_famille_{i}")
+        nom_f = fc1.text_input(f"Famille {i+1}", key=f"nom_famille_{i}")
         fam_col = fc2.selectbox(f"Colonne famille {i+1}", [""]+columns, key=f"famille_col_{i}")
         cod_col = fc3.selectbox(f"Colonne catégorie {i+1}", [""]+columns, key=f"code_col_{i}")
         familles_mapping.append({"nom":nom_f,"famille_col":fam_col,"code_col":cod_col})
@@ -1436,6 +1499,7 @@ elif role == "ec" and page == "⚙️ Paramétrage analytique":
         dos["param_comptes"] = params
         dos["mapping"] = mapping
         dos["labels_indirect"] = st.session_state["labels_indirect"]
+        dos["noms_familles_actives"] = noms_familles_actives
         save_dossier(st.session_state["dossier_id"], dos)
 
         st.success("✅ Socle analytique généré et paramètres sauvegardés dans le dossier.")
@@ -4097,7 +4161,7 @@ elif role == "ec" and page == "📋 Plan d'action":
 st.divider()
 st.markdown(
     "<div style='text-align:center;color:#888;font-size:12px'>"
-    "© 2025 Nicolas CUISSET — VISION EDITION — Mémoire d'expertise comptable"
+    "© 2026 Nicolas CUISSET — VISION EDITION — Mémoire d'expertise comptable"
     "</div>",
     unsafe_allow_html=True
 )
